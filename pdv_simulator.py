@@ -25,26 +25,29 @@ import datetime
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
-# ----------------------------- Paleta visual (preto e verde, estilo Intelbras) -----------------------------
-BG = "#0c0c0c"
-BG_HEADER = "#111111"
+# ----------------------------- Paleta visual (preto e verde vibrante, estilo Intelbras) -----------------------------
+BG = "#0a0a0a"
+BG_HEADER = "#0e0e0e"
 BG_PANEL = "#161616"
+BG_TILE = "#1b1b1b"
+BG_TILE_HOVER = "#1f2b21"
 BG_FIELD = "#0a0a0a"
 BG_LOG = "#000000"
-FG = "#eaeaea"
+FG = "#f2f2f2"
 FG_DIM = "#8f8f8f"
-ACCENT = "#22b25c"          # verde do "Habilitar"
-ACCENT_DARK = "#178a45"
-ACCENT_SOFT = "#153621"
-BORDER = "#262626"
-DANGER = "#e0524f"
+ACCENT = "#22e06a"          # verde vibrante, igual ao das referencias
+ACCENT_DARK = "#149a4a"
+ACCENT_SOFT = "#123321"
+BORDER = "#272727"
+DANGER = "#ef5350"
 BTN_DARK = "#1e1e1e"
 BTN_DARK_HOVER = "#292929"
+CARD_RADIUS = 14
 
 FONT = ("Segoe UI", 10)
 FONT_BOLD = ("Segoe UI", 10, "bold")
 FONT_SECTION = ("Segoe UI", 10, "bold")
-FONT_TITLE = ("Segoe UI", 16, "bold")
+FONT_TITLE = ("Segoe UI", 18, "bold")
 FONT_SUB = ("Segoe UI", 9)
 FONT_MONO = ("Consolas", 10)
 
@@ -76,6 +79,111 @@ PRODUTOS = [
 ]
 
 
+def fmt_brl(valor, casas=6):
+    """Formata um valor no padrao monetario brasileiro (virgula decimal,
+    ponto de milhar), alinhado a direita em `casas` colunas antes da virgula.
+    Ex.: fmt_brl(1234.5) -> '1.234,50'"""
+    s = f"{valor:,.2f}"
+    s = s.replace(",", "§").replace(".", ",").replace("§", ".")
+    return s
+
+
+# ============================================================ tooltip ===
+class Tooltip:
+    """Balão de descrição estilo 'toast' (preto/verde) que aparece ao passar
+    o mouse sobre um widget, com um pequeno atraso para não piscar à toa."""
+
+    def __init__(self, widget, text, delay=350):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._after_id = None
+        self.tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<Button-1>", self._hide, add="+")
+
+    def _schedule(self, _e=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _show(self):
+        if self.tip or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 4
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.tip = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        try:
+            tw.attributes("-topmost", True)
+        except Exception:
+            pass
+        tw.wm_geometry(f"+{x}+{y}")
+        outer = tk.Frame(tw, bg=ACCENT)
+        outer.pack()
+        inner = tk.Frame(outer, bg=BG_PANEL)
+        inner.pack(padx=1, pady=1)
+        tk.Label(inner, text=self.text, justify="left", bg=BG_PANEL, fg=FG,
+                 font=FONT_SUB, wraplength=280, padx=10, pady=6).pack()
+
+    def _hide(self, _e=None):
+        self._cancel()
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
+def tip(widget, text):
+    """Atalho para anexar uma Tooltip a um widget."""
+    Tooltip(widget, text)
+    return widget
+
+
+# ============================================================ ajuda de erros ===
+def diagnosticar_erro(exc):
+    """Traduz uma excecao tecnica de rede em (titulo assertivo, solucao sugerida),
+    para o usuario nao precisar interpretar stacktrace."""
+    msg = str(exc)
+    low = msg.lower()
+    if isinstance(exc, PermissionError) or "permission" in low or "acesso negado" in low:
+        return ("Sem permissão para usar essa porta.",
+                "Portas abaixo de 1024 exigem privilégio de administrador. Use uma porta "
+                "acima de 1024 (ex.: 9000) ou execute o simulador como administrador.")
+    if "address already in use" in low or "only one usage" in low or "10048" in low:
+        return ("Essa porta já está em uso.",
+                "Feche outra instância do simulador (ou outro programa) que esteja usando "
+                "essa porta, ou escolha uma porta diferente na Conexão de rede.")
+    if isinstance(exc, socket.timeout) or "timed out" in low:
+        return ("O gravador não respondeu a tempo.",
+                "Confira o IP e a porta, se o gravador está ligado e na mesma rede, e se o "
+                "modo de conexão dele é compatível (gravador em TCP_CLIENT → aqui use TCP "
+                "Servidor; gravador em TCP → aqui use TCP Cliente).")
+    if "refused" in low or "recusad" in low:
+        return ("Conexão recusada pelo gravador.",
+                "O IP está certo, mas nada está escutando nessa porta no gravador. Confira a "
+                "porta configurada nele e se o modo de conexão bate com o escolhido aqui.")
+    if "network is unreachable" in low or "no route to host" in low or "host is down" in low:
+        return ("Rede inacessível.",
+                "Esse IP não é alcançável a partir deste computador. Confira se os dois "
+                "equipamentos estão na mesma rede/VLAN e se não há bloqueio de firewall.")
+    if isinstance(exc, (UnicodeEncodeError, UnicodeDecodeError)) or "codec" in low:
+        return ("Caractere incompatível com a codificação escolhida.",
+                "Troque a Codificação para UTF-8, ou remova acentos e caracteres especiais "
+                "do texto do cupom.")
+    if "winerror 10061" in low:
+        return ("Conexão recusada pelo gravador.",
+                "Nada está escutando no IP/porta informados. Verifique a configuração de "
+                "rede do gravador.")
+    return (f"Falha na comunicação: {msg}",
+            "Revise IP, porta e modo de conexão. Se persistir, confirme no manual do "
+            "gravador qual modo (TCP servidor/cliente/UDP) ele espera.")
+
+
 # ============================================================ widgets custom ===
 class ToggleSwitch(tk.Canvas):
     """Interruptor deslizante verde, no estilo 'Habilitar' da interface do gravador."""
@@ -87,13 +195,20 @@ class ToggleSwitch(tk.Canvas):
         self.value = value
         self.width = width
         self.height = height
+        self.hover = False
         self.bind("<Button-1>", self._on_click)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
         self._draw()
 
     def _draw(self):
         self.delete("all")
         r = self.height / 2
         color = ACCENT if self.value else "#3a3a3a"
+        if self.hover:
+            # halo sutil ao passar o mouse, para dar sensacao de "vivo"
+            glow = ACCENT_SOFT if not self.value else ACCENT
+            self.create_oval(-2, -2, self.width + 2, self.height + 2, outline=glow, width=2)
         self.create_oval(0, 0, self.height, self.height, fill=color, outline=color)
         self.create_oval(self.width - self.height, 0, self.width, self.height, fill=color, outline=color)
         self.create_rectangle(r, 0, self.width - r, self.height, fill=color, outline=color)
@@ -101,6 +216,14 @@ class ToggleSwitch(tk.Canvas):
         knob_d = self.height - 2 * pad
         x0 = (self.width - self.height + pad) if self.value else pad
         self.create_oval(x0, pad, x0 + knob_d, pad + knob_d, fill="#ffffff", outline="#ffffff")
+
+    def _on_enter(self, _e=None):
+        self.hover = True
+        self._draw()
+
+    def _on_leave(self, _e=None):
+        self.hover = False
+        self._draw()
 
     def _on_click(self, _event):
         self.set(not self.value, fire=True)
@@ -131,16 +254,101 @@ def make_button(parent, text, command, primary=False, danger=False, width=None):
     return btn
 
 
-def section(parent, title):
-    """Painel escuro com barra de destaque verde e titulo em maiusculas, estilo card."""
-    wrapper = tk.Frame(parent, bg=BG_PANEL, highlightbackground=BORDER, highlightthickness=1)
-    head = tk.Frame(wrapper, bg=BG_PANEL)
-    head.pack(fill="x", padx=16, pady=(14, 6))
+class RoundedCard(tk.Frame):
+    """Cartao com cantos arredondados de verdade, desenhado em canvas (estilo dos
+    cards do dashboard: fundo escuro, cantos suaves, sem bordas retas duras).
+    A altura acompanha automaticamente o conteudo colocado em self.inner; a
+    largura acompanha o espaco dado pelo pack/grid do pai (use fill='x' ou sticky='nsew')."""
+
+    def __init__(self, parent, bg=BG_PANEL, radius=CARD_RADIUS, outer_bg=None):
+        outer_bg = outer_bg or parent["bg"]
+        super().__init__(parent, bg=outer_bg, highlightthickness=0)
+        self.bg = bg
+        self.radius = radius
+        self.canvas = tk.Canvas(self, bg=outer_bg, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.inner = tk.Frame(self.canvas, bg=bg)
+        self._win = self.canvas.create_window(2, 2, window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", self._sync_height)
+        self.canvas.bind("<Configure>", lambda e: self._redraw())
+
+    def _sync_height(self, _event=None):
+        h = self.inner.winfo_reqheight() + 4
+        if int(self.canvas.cget("height") or 0) != h:
+            self.canvas.configure(height=h)
+        self._redraw()
+
+    def _redraw(self):
+        self.update_idletasks()
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w < 4 or h < 4:
+            return
+        self.canvas.delete("bg")
+        r = min(self.radius, w // 2, h // 2)
+        pts = [r, 0, w - r, 0, w, 0, w, r, w, h - r, w, h,
+               w - r, h, r, h, 0, h, 0, h - r, 0, r, 0, 0]
+        self.canvas.create_polygon(pts, fill=self.bg, outline=self.bg, smooth=True, tags="bg")
+        self.canvas.tag_lower("bg")
+        self.canvas.coords(self._win, 2, 2)
+        self.canvas.itemconfig(self._win, width=w - 4)
+
+
+def section(parent, title, desc=None, icon=None):
+    """Card arredondado com barra de destaque verde, titulo em maiusculas,
+    icone opcional e, opcionalmente, uma linha de descricao."""
+    card = RoundedCard(parent, bg=BG_PANEL, outer_bg=BG)
+    head = tk.Frame(card.inner, bg=BG_PANEL)
+    head.pack(fill="x", padx=18, pady=(16, 4 if desc else 8))
     tk.Frame(head, bg=ACCENT, width=4, height=16).pack(side="left", padx=(0, 8))
+    if icon:
+        tk.Label(head, text=icon, bg=BG_PANEL, fg=ACCENT, font=("Segoe UI", 12)).pack(side="left", padx=(0, 6))
     tk.Label(head, text=title.upper(), bg=BG_PANEL, fg=ACCENT, font=FONT_SECTION).pack(side="left")
-    body = tk.Frame(wrapper, bg=BG_PANEL)
-    body.pack(fill="both", expand=True, padx=16, pady=(0, 16))
-    return wrapper, body
+    if desc:
+        desc_row = tk.Frame(card.inner, bg=BG_PANEL)
+        desc_row.pack(fill="x", padx=18, pady=(0, 10))
+        tk.Label(desc_row, text=desc, bg=BG_PANEL, fg=FG_DIM, font=FONT_SUB,
+                 anchor="w", justify="left").pack(fill="x")
+    body = tk.Frame(card.inner, bg=BG_PANEL)
+    body.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+    return card, body
+
+
+def make_tile(parent, title, command):
+    """Tile clicavel no estilo dos cards do dashboard (titulo em negrito + linha fina
+    embaixo, destaca em verde ao passar o mouse)."""
+    tile = RoundedCard(parent, bg=BG_TILE, radius=10, outer_bg=BG_PANEL)
+    tile.configure(width=150, height=64)
+    tile.pack_propagate(False)
+    inner = tile.inner
+    lbl = tk.Label(inner, text=title, bg=BG_TILE, fg=FG, font=("Segoe UI", 10, "bold"), anchor="w")
+    lbl.pack(fill="x", padx=14, pady=(14, 6))
+    underline = tk.Frame(inner, bg=FG_DIM, height=2, width=28)
+    underline.pack(anchor="w", padx=14)
+
+    widgets = [tile, tile.canvas, inner, lbl, underline]
+
+    def on_enter(_e=None):
+        tile.bg = BG_TILE_HOVER
+        inner.configure(bg=BG_TILE_HOVER)
+        lbl.configure(bg=BG_TILE_HOVER)
+        underline.configure(bg=ACCENT)
+        tile._on_resize(type("E", (), {"width": tile.winfo_width(), "height": tile.winfo_height()})())
+
+    def on_leave(_e=None):
+        tile.bg = BG_TILE
+        inner.configure(bg=BG_TILE)
+        lbl.configure(bg=BG_TILE)
+        underline.configure(bg=FG_DIM)
+        tile._on_resize(type("E", (), {"width": tile.winfo_width(), "height": tile.winfo_height()})())
+
+    for w in widgets:
+        w.configure(cursor="hand2") if hasattr(w, "configure") else None
+        w.bind("<Enter>", on_enter)
+        w.bind("<Leave>", on_leave)
+        w.bind("<Button-1>", lambda e: command())
+
+    return tile
 
 
 # ============================================================ aplicacao ===
@@ -149,8 +357,8 @@ class PDVSimulator:
         self.root = root
         self.root.title("Simulador de PDV - Teste de Overlay (Intelbras)")
         self.root.configure(bg=BG)
-        self.root.geometry("1020x760")
-        self.root.minsize(900, 650)
+        self.root.geometry("1180x800")
+        self.root.minsize(1040, 680)
 
         self.sock = None
         self.conn = None
@@ -160,10 +368,12 @@ class PDVSimulator:
         self.stop_flag = threading.Event()
         self.auto_thread = None
         self.auto_running = False
+        self.send_lock = threading.Lock()
 
         self._setup_style()
         self._build_ui()
         self._log("Simulador pronto. Configure a conexão e ative o Habilitar.")
+        self._pulse_status()
 
     # --------------------------------------------------------------- estilo ---
     def _setup_style(self):
@@ -176,12 +386,28 @@ class PDVSimulator:
         style.configure("TLabel", background=BG_PANEL, foreground=FG, font=FONT)
         style.configure("Dim.TLabel", background=BG_PANEL, foreground=FG_DIM, font=FONT)
         style.configure("TCombobox", fieldbackground=BG_FIELD, background=BG_FIELD,
-                         foreground=FG, arrowcolor=FG, bordercolor=BORDER)
+                         foreground=FG, arrowcolor=FG, bordercolor=BORDER,
+                         lightcolor=BORDER, darkcolor=BORDER, borderwidth=1)
         style.map("TCombobox", fieldbackground=[("readonly", BG_FIELD)],
                    selectbackground=[("readonly", BG_FIELD)],
-                   selectforeground=[("readonly", FG)])
-        style.configure("TEntry", fieldbackground=BG_FIELD, foreground=FG, insertcolor=FG)
-        style.configure("TSpinbox", fieldbackground=BG_FIELD, foreground=FG, arrowcolor=FG)
+                   selectforeground=[("readonly", FG)],
+                   bordercolor=[("focus", ACCENT), ("active", ACCENT_DARK)],
+                   lightcolor=[("focus", ACCENT)],
+                   darkcolor=[("focus", ACCENT)],
+                   arrowcolor=[("focus", ACCENT)])
+        style.configure("TEntry", fieldbackground=BG_FIELD, foreground=FG, insertcolor=FG,
+                         bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, borderwidth=1)
+        style.map("TEntry",
+                   bordercolor=[("focus", ACCENT)],
+                   lightcolor=[("focus", ACCENT)],
+                   darkcolor=[("focus", ACCENT)])
+        style.configure("TSpinbox", fieldbackground=BG_FIELD, foreground=FG, arrowcolor=FG,
+                         bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, borderwidth=1)
+        style.map("TSpinbox",
+                   bordercolor=[("focus", ACCENT)],
+                   lightcolor=[("focus", ACCENT)],
+                   darkcolor=[("focus", ACCENT)],
+                   arrowcolor=[("focus", ACCENT)])
         self.root.option_add("*TCombobox*Listbox.background", BG_FIELD)
         self.root.option_add("*TCombobox*Listbox.foreground", FG)
         self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
@@ -189,26 +415,32 @@ class PDVSimulator:
 
     # ---------------------------------------------------------------- header ---
     def _build_header(self):
-        header = tk.Frame(self.root, bg=BG_HEADER, height=68)
+        header = tk.Frame(self.root, bg=BG_HEADER, height=76)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
 
         title_box = tk.Frame(header, bg=BG_HEADER)
-        title_box.pack(side="left", padx=20, pady=10)
+        title_box.pack(side="left", padx=24, pady=12)
         title_row = tk.Frame(title_box, bg=BG_HEADER)
         title_row.pack(anchor="w")
-        tk.Label(title_row, text="SIMULADOR", bg=BG_HEADER, fg=FG, font=FONT_TITLE).pack(side="left")
-        tk.Label(title_row, text=" PDV", bg=BG_HEADER, fg=ACCENT, font=FONT_TITLE).pack(side="left")
+        tk.Label(title_row, text="simulador", bg=BG_HEADER, fg=FG, font=FONT_TITLE).pack(side="left")
+        tk.Label(title_row, text="pdv", bg=BG_HEADER, fg=ACCENT, font=FONT_TITLE).pack(side="left")
         tk.Label(title_box, text="Overlay de teste compatível com gravadores Intelbras",
                  bg=BG_HEADER, fg=FG_DIM, font=FONT_SUB).pack(anchor="w")
 
-        status_box = tk.Frame(header, bg=BG_HEADER)
-        status_box.pack(side="right", padx=20)
-        self.status_dot = tk.Canvas(status_box, width=12, height=12, bg=BG_HEADER, highlightthickness=0)
+        status_pill = RoundedCard(header, bg=BG_PANEL, radius=16, outer_bg=BG_HEADER)
+        status_pill.configure(width=190, height=34)
+        status_pill.pack_propagate(False)
+        status_pill.pack(side="right", padx=24)
+        status_box = status_pill.inner
+        status_box.pack(fill="both", expand=True)
+        inner_pad = tk.Frame(status_box, bg=BG_PANEL)
+        inner_pad.place(relx=0.5, rely=0.5, anchor="center")
+        self.status_dot = tk.Canvas(inner_pad, width=10, height=10, bg=BG_PANEL, highlightthickness=0)
         self.status_dot.pack(side="left", padx=(0, 8))
-        self._dot_id = self.status_dot.create_oval(1, 1, 11, 11, fill=DANGER, outline=DANGER)
+        self._dot_id = self.status_dot.create_oval(1, 1, 9, 9, fill=DANGER, outline=DANGER)
         self.status_var = tk.StringVar(value="DESCONECTADO")
-        self.status_lbl = tk.Label(status_box, textvariable=self.status_var, bg=BG_HEADER,
+        self.status_lbl = tk.Label(inner_pad, textvariable=self.status_var, bg=BG_PANEL,
                                     fg=DANGER, font=FONT_BOLD)
         self.status_lbl.pack(side="left")
 
@@ -220,9 +452,28 @@ class PDVSimulator:
 
         outer = tk.Frame(self.root, bg=BG, padx=16, pady=14)
         outer.pack(fill="both", expand=True)
+        outer.grid_columnconfigure(0, weight=0)
+        outer.grid_columnconfigure(1, weight=1)
+        outer.grid_rowconfigure(0, weight=1)
+
+        # Coluna esquerda: configuração (largura fixa, altura total)
+        left_col = tk.Frame(outer, bg=BG, width=400)
+        left_col.grid(row=0, column=0, sticky="ns", padx=(0, 14))
+        left_col.grid_propagate(False)
+        left_col.pack_propagate(False)
+
+        # Coluna direita: area de trabalho (expande com a janela)
+        right_col = tk.Frame(outer, bg=BG)
+        right_col.grid(row=0, column=1, sticky="nsew")
+        right_col.grid_columnconfigure(0, weight=1)
+        right_col.grid_rowconfigure(0, weight=3)
+        right_col.grid_rowconfigure(1, weight=2)
 
         # ---- Conexao ----
-        conn_wrap, conn_frame = section(outer, "Conexão de rede")
+        conn_wrap, conn_frame = section(
+            left_col, "Conexão de rede", icon="🔌",
+            desc="Escolha como o simulador conversa com o gravador Intelbras: quem inicia a "
+                 "conexão, em qual IP/porta, e como o texto é codificado.")
         conn_wrap.pack(fill="x", pady=(0, 12))
 
         top_row = tk.Frame(conn_frame, bg=BG_PANEL)
@@ -230,95 +481,168 @@ class PDVSimulator:
         tk.Label(top_row, text="Habilitar", bg=BG_PANEL, fg=FG, font=("Segoe UI", 11, "bold")).pack(side="left")
         self.enable_toggle = ToggleSwitch(top_row, command=self._on_toggle_enable)
         self.enable_toggle.pack(side="left", padx=(14, 0))
-        tk.Label(top_row, text="liga/desliga o envio para o gravador", bg=BG_PANEL,
-                 fg=FG_DIM, font=FONT_SUB).pack(side="left", padx=(12, 0))
+        tip(self.enable_toggle, "Liga ou desliga a conexão com o gravador usando o modo, "
+                                  "IP e porta configurados abaixo.")
 
         tk.Frame(conn_frame, bg=BORDER, height=1).pack(fill="x", pady=(0, 14))
 
         grid = tk.Frame(conn_frame, bg=BG_PANEL)
         grid.pack(fill="x")
+        grid.grid_columnconfigure(0, weight=1)
+        grid.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(grid, text="Modo de conexão", style="Dim.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(grid, text="Modo de conexão", style="Dim.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
         self.mode_display_var = tk.StringVar(value=MODE_DISPLAY_LIST[0])
         self.mode_combo = ttk.Combobox(grid, textvariable=self.mode_display_var,
-                                        values=MODE_DISPLAY_LIST, state="readonly", width=42)
-        self.mode_combo.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 14))
+                                        values=MODE_DISPLAY_LIST, state="readonly")
+        self.mode_combo.grid(row=1, column=0, columnspan=2, sticky="we", pady=(2, 14))
         self.mode_combo.bind("<<ComboboxSelected>>", lambda e: self._on_mode_change())
+        tip(self.mode_combo,
+            "TCP Servidor: use quando o gravador está configurado como TCP_CLIENT (ele conecta "
+            "aqui).\nTCP Cliente: use quando o gravador está configurado como TCP (ele espera "
+            "conexão).\nUDP: envio sem conexão, mais simples porém sem confirmação de entrega.")
 
         self.ip_label = ttk.Label(grid, text="IP de escuta", style="Dim.TLabel")
         self.ip_label.grid(row=2, column=0, sticky="w")
         self.ip_var = tk.StringVar(value="0.0.0.0")
-        ttk.Entry(grid, textvariable=self.ip_var, width=18, font=FONT_MONO).grid(
-            row=3, column=0, sticky="w", pady=(2, 14))
+        ip_entry = ttk.Entry(grid, textvariable=self.ip_var, font=FONT_MONO)
+        ip_entry.grid(row=3, column=0, sticky="we", pady=(2, 14), padx=(0, 6))
+        tip(ip_entry, "No modo TCP Servidor, 0.0.0.0 escuta em todas as interfaces de rede "
+                       "deste computador. Nos demais modos, informe o IP do gravador.")
 
-        ttk.Label(grid, text="Porta", style="Dim.TLabel").grid(row=2, column=1, sticky="w", padx=(20, 0))
+        ttk.Label(grid, text="Porta", style="Dim.TLabel").grid(row=2, column=1, sticky="w")
         self.port_var = tk.StringVar(value="9000")
-        ttk.Entry(grid, textvariable=self.port_var, width=10, font=FONT_MONO).grid(
-            row=3, column=1, sticky="w", padx=(20, 0), pady=(2, 14))
+        port_entry = ttk.Entry(grid, textvariable=self.port_var, font=FONT_MONO)
+        port_entry.grid(row=3, column=1, sticky="we", pady=(2, 14))
+        tip(port_entry, "Deve ser a mesma porta configurada na tela de overlay de PDV do "
+                         "gravador. Prefira portas acima de 1024 para não precisar de "
+                         "permissão de administrador.")
 
-        ttk.Label(grid, text="Codificação", style="Dim.TLabel").grid(row=2, column=2, sticky="w", padx=(20, 0))
+        ttk.Label(grid, text="Codificação", style="Dim.TLabel").grid(row=4, column=0, sticky="w")
         self.enc_var = tk.StringVar(value="Unicode (UTF-8)")
-        ttk.Combobox(grid, textvariable=self.enc_var, values=list(ENCODINGS.keys()),
-                     state="readonly", width=20).grid(row=3, column=2, sticky="w", padx=(20, 0), pady=(2, 14))
+        enc_combo = ttk.Combobox(grid, textvariable=self.enc_var, values=list(ENCODINGS.keys()),
+                                  state="readonly")
+        enc_combo.grid(row=5, column=0, sticky="we", pady=(2, 0), padx=(0, 6))
+        tip(enc_combo, "Como o texto vira bytes na rede. A maioria dos gravadores Intelbras "
+                        "espera Latin-1 ou ASCII (1 byte por caractere, sem acentos). UTF-8 usa "
+                        "vários bytes para acentos e pode confundir o parser do gravador.")
 
-        ttk.Label(grid, text="Terminador de linha", style="Dim.TLabel").grid(row=2, column=3, sticky="w", padx=(20, 0))
+        ttk.Label(grid, text="Terminador", style="Dim.TLabel").grid(row=4, column=1, sticky="w")
         self.term_var = tk.StringVar(value="CRLF (\\r\\n)")
-        ttk.Combobox(grid, textvariable=self.term_var, values=list(TERMINATORS.keys()),
-                     state="readonly", width=14).grid(row=3, column=3, sticky="w", padx=(20, 0), pady=(2, 14))
+        term_combo = ttk.Combobox(grid, textvariable=self.term_var, values=list(TERMINATORS.keys()),
+                                   state="readonly")
+        term_combo.grid(row=5, column=1, sticky="we", pady=(2, 0))
+        tip(term_combo, "Byte(s) que marcam o fim de cada linha para o gravador. CRLF é o mais "
+                         "comum em protocolos seriais adaptados para rede; troque se o overlay "
+                         "não estiver fechando as linhas corretamente.")
 
-        # ---- Composicao da venda ----
-        sale_wrap, sale_frame = section(outer, "Conteúdo a enviar (recibo / cupom)")
-        sale_wrap.pack(fill="both", expand=True, pady=(0, 12))
+        # ---- Envio (mesma coluna, abaixo da conexao) ----
+        send_wrap, send_frame = section(
+            left_col, "Envio", icon="📤",
+            desc="Envie o cupom para o gravador, de uma vez ou linha a linha, e configure a "
+                 "repetição automática.")
+        send_wrap.pack(fill="x")
 
-        toolbar = tk.Frame(sale_frame, bg=BG_PANEL)
-        toolbar.pack(fill="x", pady=(0, 10))
-        make_button(toolbar, "+ Cabeçalho", self._insert_header).pack(side="left", padx=(0, 6))
-        make_button(toolbar, "+ Item", self._insert_item).pack(side="left", padx=(0, 6))
-        make_button(toolbar, "+ Total", self._insert_total).pack(side="left", padx=(0, 6))
-        make_button(toolbar, "+ Pagamento", self._insert_payment).pack(side="left", padx=(0, 6))
-        make_button(toolbar, "+ Rodapé", self._insert_footer).pack(side="left", padx=(0, 6))
-        make_button(toolbar, "Limpar", self._clear_text).pack(side="left", padx=(6, 0))
-        make_button(toolbar, "Gerar Venda Aleatória", self._generate_random_sale, primary=True).pack(side="right")
+        btn_all = make_button(send_frame, "Enviar Tudo (1 pacote)", self._send_all, primary=True)
+        btn_all.pack(fill="x")
+        tip(btn_all, "Envia o cupom inteiro em um único pacote. Mais rápido, porém alguns "
+                      "gravadores perdem dados nesse modo — veja 'Enviar Linha a Linha'.")
+        btn_line = make_button(send_frame, "Enviar Linha a Linha", self._send_line_by_line)
+        btn_line.pack(fill="x", pady=(8, 0))
+        tip(btn_line, "Envia uma linha por vez, respeitando o atraso configurado abaixo. "
+                       "Mais lento, porém mais confiável para gravadores que perdem dados "
+                       "com pacotes grandes.")
 
-        self.text = scrolledtext.ScrolledText(sale_frame, height=13, bg=BG_FIELD, fg=FG,
+        delay_row = tk.Frame(send_frame, bg=BG_PANEL)
+        delay_row.pack(fill="x", pady=(14, 0))
+        ttk.Label(delay_row, text="Atraso entre linhas (ms)", style="Dim.TLabel").pack(side="left")
+        self.delay_var = tk.StringVar(value="700")
+        delay_spin = ttk.Spinbox(delay_row, from_=0, to=5000, increment=50, textvariable=self.delay_var,
+                                  width=6)
+        delay_spin.pack(side="right")
+        tip(delay_spin, "Tempo de espera entre cada linha enviada. Valores abaixo de "
+                         "~600-700ms costumam causar perda de dados em alguns gravadores.")
+        tk.Label(send_frame, text="⚠ abaixo de ~600-700ms o gravador costuma perder dados",
+                 bg=BG_PANEL, fg="#f5c542", font=FONT_SUB, anchor="w").pack(fill="x", pady=(4, 0))
+
+        tk.Frame(send_frame, bg=BORDER, height=1).pack(fill="x", pady=(14, 12))
+
+        auto_top = tk.Frame(send_frame, bg=BG_PANEL)
+        auto_top.pack(fill="x")
+        tk.Label(auto_top, text="Repetir automaticamente", bg=BG_PANEL, fg=FG, font=FONT).pack(side="left")
+        self.auto_toggle = ToggleSwitch(auto_top, command=self._on_toggle_auto)
+        self.auto_toggle.pack(side="right")
+        tip(self.auto_toggle, "Gera e envia uma nova venda aleatória periodicamente, sem "
+                                "precisar clicar nos botões de envio a cada vez.")
+
+        auto_row = tk.Frame(send_frame, bg=BG_PANEL)
+        auto_row.pack(fill="x", pady=(10, 0))
+        ttk.Label(auto_row, text="a cada", style="Dim.TLabel").pack(side="left")
+        self.interval_var = tk.StringVar(value="10")
+        ttk.Spinbox(auto_row, from_=1, to=3600, textvariable=self.interval_var, width=6).pack(side="left", padx=(6, 6))
+        ttk.Label(auto_row, text="seg", style="Dim.TLabel").pack(side="left")
+
+        auto_row2 = tk.Frame(send_frame, bg=BG_PANEL)
+        auto_row2.pack(fill="x", pady=(8, 0))
+        ttk.Label(auto_row2, text="Enviando:", style="Dim.TLabel").pack(side="left")
+        self.auto_send_mode_var = tk.StringVar(value="Linha a linha (recomendado)")
+        auto_mode_combo = ttk.Combobox(auto_row2, textvariable=self.auto_send_mode_var,
+                                        values=["Linha a linha (recomendado)", "Pacote único"],
+                                        state="readonly")
+        auto_mode_combo.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        tip(auto_mode_combo, "Linha a linha evita a perda de dados relatada em pacote único; "
+                               "use Pacote único só se o seu gravador aceitar bem esse formato.")
+
+        # ---- Composicao da venda (coluna direita, topo) ----
+        sale_wrap, sale_frame = section(
+            right_col, "Conteúdo a enviar (recibo / cupom)", icon="🧾",
+            desc="Monte o texto do cupom manualmente com os blocos abaixo, ou gere uma venda "
+                 "aleatória pronta para testar o overlay.")
+        sale_wrap.grid(row=0, column=0, sticky="nsew", pady=(0, 12))
+
+        tiles_row = tk.Frame(sale_frame, bg=BG_PANEL)
+        tiles_row.pack(fill="x", pady=(0, 12))
+        tile_defs = [
+            ("+ Cabeçalho", self._insert_header, "Insere nome da loja, CNPJ e data/hora."),
+            ("+ Item", self._insert_item, "Insere um produto aleatório com quantidade e valor."),
+            ("+ Total", self._insert_total, "Insere a linha de total a pagar."),
+            ("+ Pagamento", self._insert_payment, "Insere a forma de pagamento (cartão, dinheiro, PIX)."),
+            ("+ Rodapé", self._insert_footer, "Insere a mensagem de agradecimento final."),
+            ("Limpar tudo", self._clear_text, "Apaga todo o texto do cupom."),
+        ]
+        for i, (label, cmd, desc_tile) in enumerate(tile_defs):
+            tiles_row.grid_columnconfigure(i, weight=1, uniform="tiles")
+            tile = make_tile(tiles_row, label, cmd)
+            tile.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0))
+            tip(tile, desc_tile)
+
+        gerar_btn = make_button(sale_frame, "Gerar Venda Aleatória", self._generate_random_sale,
+                                 primary=True)
+        gerar_btn.pack(anchor="e", pady=(0, 4))
+        tip(gerar_btn, "Substitui o cupom atual por uma venda completa e aleatória "
+                        "(cabeçalho, 2 a 6 itens, total e pagamento).")
+
+        self.text = scrolledtext.ScrolledText(sale_frame, height=10, bg=BG_FIELD, fg=FG,
                                                insertbackground=FG, font=FONT_MONO, wrap="word",
                                                borderwidth=1, relief="solid", highlightbackground=BORDER,
                                                highlightcolor=ACCENT, highlightthickness=1)
         self.text.pack(fill="both", expand=True)
         self._generate_random_sale()
 
-        # ---- Envio ----
-        send_wrap, send_frame = section(outer, "Envio")
-        send_wrap.pack(fill="x", pady=(0, 12))
-
-        send_row = tk.Frame(send_frame, bg=BG_PANEL)
-        send_row.pack(fill="x")
-        make_button(send_row, "Enviar Tudo (1 pacote)", self._send_all, primary=True).pack(side="left")
-        make_button(send_row, "Enviar Linha a Linha", self._send_line_by_line).pack(side="left", padx=(8, 0))
-
-        ttk.Label(send_row, text="Atraso entre linhas (ms)", style="Dim.TLabel").pack(side="left", padx=(20, 6))
-        self.delay_var = tk.StringVar(value="300")
-        ttk.Spinbox(send_row, from_=0, to=5000, increment=50, textvariable=self.delay_var,
-                    width=6).pack(side="left")
-
-        auto_row = tk.Frame(send_frame, bg=BG_PANEL)
-        auto_row.pack(fill="x", pady=(14, 0))
-        tk.Label(auto_row, text="Repetir automaticamente", bg=BG_PANEL, fg=FG, font=FONT).pack(side="left")
-        self.auto_toggle = ToggleSwitch(auto_row, command=self._on_toggle_auto)
-        self.auto_toggle.pack(side="left", padx=(12, 12))
-        ttk.Label(auto_row, text="a cada", style="Dim.TLabel").pack(side="left")
-        self.interval_var = tk.StringVar(value="10")
-        ttk.Spinbox(auto_row, from_=1, to=3600, textvariable=self.interval_var, width=6).pack(side="left", padx=(6, 6))
-        ttk.Label(auto_row, text="seg (nova venda aleatória)", style="Dim.TLabel").pack(side="left")
-
-        # ---- Log ----
-        log_wrap, log_frame = section(outer, "Log de eventos")
-        log_wrap.pack(fill="both", expand=True)
-        self.log = scrolledtext.ScrolledText(log_frame, height=7, bg=BG_LOG, fg="#63d98a",
+        # ---- Log (coluna direita, embaixo) ----
+        log_wrap, log_frame = section(
+            right_col, "Log de eventos", icon="📋",
+            desc="Cada conexão, envio e erro aparece aqui — erros vêm com uma sugestão de "
+                 "solução, não só o código técnico.")
+        log_wrap.grid(row=1, column=0, sticky="nsew")
+        self.log = scrolledtext.ScrolledText(log_frame, height=6, bg=BG_LOG, fg="#63d98a",
                                               font=FONT_MONO, state="disabled", wrap="word",
                                               borderwidth=1, relief="solid", highlightbackground=BORDER,
                                               highlightthickness=1)
         self.log.pack(fill="both", expand=True)
+        self.log.tag_configure("ok", foreground="#63d98a")
+        self.log.tag_configure("warn", foreground="#f5c542")
+        self.log.tag_configure("err", foreground="#ef5350")
 
         self._on_mode_change()
 
@@ -336,8 +660,12 @@ class PDVSimulator:
     def _log(self, msg):
         def do():
             ts = datetime.datetime.now().strftime("%H:%M:%S")
+            if msg.startswith("⚠"):
+                tag = "err"
+            else:
+                tag = "ok"
             self.log.configure(state="normal")
-            self.log.insert("end", f"[{ts}] {msg}\n")
+            self.log.insert("end", f"[{ts}] {msg}\n", tag)
             self.log.see("end")
             self.log.configure(state="disabled")
         self.root.after(0, do)
@@ -350,6 +678,18 @@ class PDVSimulator:
             self.status_dot.itemconfig(self._dot_id, fill=color, outline=color)
         self.root.after(0, do)
 
+    def _pulse_status(self):
+        """Faz o ponto de status 'respirar' suavemente quando conectado, para
+        a interface parecer viva em vez de estatica."""
+        try:
+            if self.connected:
+                self._pulse_on = not getattr(self, "_pulse_on", False)
+                color = ACCENT if self._pulse_on else ACCENT_DARK
+                self.status_dot.itemconfig(self._dot_id, fill=color, outline=color)
+        except Exception:
+            pass
+        self.root.after(650, self._pulse_status)
+
     # ------------------------------------------------------- templates ---
     def _insert_header(self):
         self.text.insert("insert", "LOJA TESTE INTELBRAS\nCNPJ 00.000.000/0001-00\n"
@@ -358,10 +698,10 @@ class PDVSimulator:
     def _insert_item(self):
         nome, preco = random.choice(PRODUTOS)
         qtd = random.randint(1, 3)
-        self.text.insert("insert", f"{nome:<24}{qtd}x{preco:6.2f} {qtd*preco:8.2f}\n")
+        self.text.insert("insert", f"{nome:<24}{qtd}x{fmt_brl(preco):>6} {fmt_brl(qtd*preco):>8}\n")
 
     def _insert_total(self):
-        self.text.insert("insert", "TOTAL A PAGAR ........... 00.00\n")
+        self.text.insert("insert", f"TOTAL A PAGAR ........... {fmt_brl(0):>5}\n")
 
     def _insert_payment(self):
         self.text.insert("insert", random.choice([
@@ -391,9 +731,9 @@ class PDVSimulator:
             qtd = random.randint(1, 3)
             subtotal = qtd * preco
             total += subtotal
-            lines.append(f"{nome:<22}{qtd}x{preco:5.2f}{subtotal:8.2f}")
+            lines.append(f"{nome:<22}{qtd}x{fmt_brl(preco):>5}{fmt_brl(subtotal):>8}")
         lines.append("-" * 32)
-        lines.append(f"TOTAL .......................{total:8.2f}")
+        lines.append(f"TOTAL .......................{fmt_brl(total):>8}")
         lines.append(random.choice([
             "FORMA DE PAGAMENTO: CARTAO DEBITO",
             "FORMA DE PAGAMENTO: CARTAO CREDITO",
@@ -436,7 +776,9 @@ class PDVSimulator:
                 self._set_status(f"UDP pronto -> destino {ip}:{port}", True)
                 self._log(f"UDP configurado para enviar a {ip}:{port}")
             except Exception as e:
-                self._log(f"Erro ao configurar UDP: {e}")
+                titulo, solucao = diagnosticar_erro(e)
+                self._log(f"⚠ {titulo} {solucao}")
+                messagebox.showerror(titulo, solucao)
                 self.enable_toggle.set(False)
 
     def _run_tcp_server(self, ip, port):
@@ -460,7 +802,9 @@ class PDVSimulator:
                         time.sleep(0.3)
                         try:
                             conn.setblocking(False)
-                            data = conn.recv(1)
+                            # MSG_PEEK: apenas espia se ha bytes/desconexao, sem
+                            # consumir dados que o gravador porventura envie de volta.
+                            data = conn.recv(1, socket.MSG_PEEK)
                             if data == b"":
                                 raise ConnectionResetError()
                         except BlockingIOError:
@@ -480,8 +824,10 @@ class PDVSimulator:
                             pass
                         self.conn = None
         except Exception as e:
-            self._log(f"Erro no servidor TCP: {e}")
+            titulo, solucao = diagnosticar_erro(e)
+            self._log(f"⚠ {titulo} {solucao}")
             self._set_status("Erro ao iniciar servidor", False)
+            self.root.after(0, lambda: messagebox.showerror(titulo, solucao))
             self.root.after(0, lambda: self.enable_toggle.set(False))
         finally:
             self._cleanup_sockets()
@@ -501,8 +847,10 @@ class PDVSimulator:
             while not self.stop_flag.is_set():
                 time.sleep(0.3)
         except Exception as e:
-            self._log(f"Erro ao conectar: {e}")
+            titulo, solucao = diagnosticar_erro(e)
+            self._log(f"⚠ {titulo} {solucao}")
             self._set_status("Falha ao conectar", False)
+            self.root.after(0, lambda: messagebox.showerror(titulo, solucao))
             self.root.after(0, lambda: self.enable_toggle.set(False))
         finally:
             self._cleanup_sockets()
@@ -538,23 +886,26 @@ class PDVSimulator:
         try:
             data = payload_str.encode(enc, errors="replace")
         except Exception as e:
-            self._log(f"Erro ao codificar texto: {e}")
+            titulo, solucao = diagnosticar_erro(e)
+            self._log(f"⚠ {titulo} {solucao}")
             return False
 
         try:
-            if mode == "udp":
-                if not self.sock:
-                    self._log("UDP não configurado. Ative o Habilitar primeiro.")
-                    return False
-                self.sock.sendto(data, self.udp_target)
-            else:
-                if not self.connected or not self.conn:
-                    self._log("Não há conexão ativa. Ative o Habilitar e aguarde conectar.")
-                    return False
-                self.conn.sendall(data)
+            with self.send_lock:
+                if mode == "udp":
+                    if not self.sock:
+                        self._log("UDP não configurado. Ative o Habilitar primeiro.")
+                        return False
+                    self.sock.sendto(data, self.udp_target)
+                else:
+                    if not self.connected or not self.conn:
+                        self._log("Não há conexão ativa. Ative o Habilitar e aguarde conectar.")
+                        return False
+                    self.conn.sendall(data)
             return True
         except Exception as e:
-            self._log(f"Erro ao enviar: {e}")
+            titulo, solucao = diagnosticar_erro(e)
+            self._log(f"⚠ {titulo} {solucao}")
             return False
 
     def _send_all(self):
@@ -564,26 +915,27 @@ class PDVSimulator:
         if self._raw_send(payload):
             self._log(f"Enviado 1 pacote ({len(payload)} caracteres).")
 
-    def _send_line_by_line(self):
+    def _send_line_by_line_sync(self):
+        """Envia o conteudo linha a linha, bloqueando ate terminar. Chamar
+        sempre de uma thread separada (nunca da thread principal da UI)."""
         content = self.text.get("1.0", "end-1c")
         lines = content.split("\n")
         try:
             delay = max(0, int(self.delay_var.get())) / 1000.0
         except ValueError:
-            delay = 0.3
+            delay = 0.7
         term = self._get_terminator()
+        for line in lines:
+            if not line.strip():
+                continue
+            ok = self._raw_send(line + term)
+            if ok:
+                self._log(f"Linha enviada: {line}")
+            time.sleep(delay)
+        self._log("Envio linha a linha concluído.")
 
-        def worker():
-            for line in lines:
-                if not line.strip():
-                    continue
-                ok = self._raw_send(line + term)
-                if ok:
-                    self._log(f"Linha enviada: {line}")
-                time.sleep(delay)
-            self._log("Envio linha a linha concluído.")
-
-        threading.Thread(target=worker, daemon=True).start()
+    def _send_line_by_line(self):
+        threading.Thread(target=self._send_line_by_line_sync, daemon=True).start()
 
     def _on_toggle_auto(self, value):
         if value:
@@ -603,7 +955,19 @@ class PDVSimulator:
                 interval = 10
             self.root.after(0, self._generate_random_sale)
             time.sleep(0.2)
-            self.root.after(0, self._send_all)
+            if self.auto_send_mode_var.get().startswith("Linha"):
+                # Envio linha a linha (com atraso) e mais confiavel para o
+                # gravador: envia e so segue o loop apos o envio terminar.
+                done = threading.Event()
+
+                def worker():
+                    self._send_line_by_line_sync()
+                    done.set()
+
+                self.root.after(0, lambda: threading.Thread(target=worker, daemon=True).start())
+                done.wait(timeout=interval + 5)
+            else:
+                self.root.after(0, self._send_all)
             for _ in range(interval * 10):
                 if not self.auto_running:
                     return
