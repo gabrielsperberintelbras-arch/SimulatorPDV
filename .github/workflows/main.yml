@@ -5,7 +5,7 @@ on:
     branches: [ main ]
     paths:
       - "pdv_simulator.py"
-      - ".github/workflows/build-windows.yml"
+      - ".github/workflows/main.yml"
   workflow_dispatch: {}
 
 jobs:
