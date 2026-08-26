@@ -1,0 +1,34 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "pdv_simulator.py"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch: {}   # permite rodar manualmente pelo botão "Run workflow"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout do repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar PyInstaller
+        run: pip install pyinstaller
+
+      - name: Compilar EXE
+        run: pyinstaller --onefile --windowed --name SimuladorPDV pdv_simulator.py
+
+      - name: Publicar artefato (download)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimuladorPDV-windows
+          path: dist/SimuladorPDV.exe
