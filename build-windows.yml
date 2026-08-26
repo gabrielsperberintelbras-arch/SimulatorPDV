@@ -6,7 +6,7 @@ on:
     paths:
       - "pdv_simulator.py"
       - ".github/workflows/build-windows.yml"
-  workflow_dispatch: {}   # permite rodar manualmente pelo botão "Run workflow"
+  workflow_dispatch: {}
 
 jobs:
   build:
