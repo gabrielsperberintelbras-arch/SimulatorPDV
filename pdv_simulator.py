@@ -17,6 +17,8 @@ Como escolher o modo de conexão (compare com a tela "Modo de conexão" do grava
 Requer apenas Python 3 padrão (tkinter já vem incluso). Nenhuma dependência externa.
 """
 
+import os
+import sys
 import socket
 import threading
 import random
@@ -86,6 +88,18 @@ def fmt_brl(valor, casas=6):
     s = f"{valor:,.2f}"
     s = s.replace(",", "§").replace(".", ",").replace("§", ".")
     return s
+
+
+def linha_pontilhada(rotulo, valor, largura=42):
+    """Monta uma linha 'rotulo ..... valor', no estilo cupom fiscal.
+    Preenchimento com pontos em vez de espacos: no simulador (fonte
+    monoespacada) qualquer um dos dois alinha, mas no overlay real do
+    gravador a fonte costuma ser proporcional (cada letra com largura
+    diferente) - ai espacos nao alinham nada, enquanto o olho ainda segue
+    uma linha de pontos ate o valor mesmo sem alinhamento pixel-perfeito."""
+    espaco = largura - len(rotulo) - len(valor) - 2
+    pontos = "." * max(3, espaco)
+    return f"{rotulo} {pontos} {valor}"
 
 
 # ============================================================ tooltip ===
@@ -316,15 +330,18 @@ def section(parent, title, desc=None, icon=None):
 
 def make_tile(parent, title, command):
     """Tile clicavel no estilo dos cards do dashboard (titulo em negrito + linha fina
-    embaixo, destaca em verde ao passar o mouse)."""
+    embaixo, destaca em verde ao passar o mouse). Largura flexivel (definida pelo
+    grid do pai via sticky='nsew'); apenas a altura e fixa, para nao transbordar
+    do card quando ha varios tiles numa linha estreita."""
     tile = RoundedCard(parent, bg=BG_TILE, radius=10, outer_bg=BG_PANEL)
-    tile.configure(width=150, height=64)
+    tile.configure(height=58)
     tile.pack_propagate(False)
     inner = tile.inner
-    lbl = tk.Label(inner, text=title, bg=BG_TILE, fg=FG, font=("Segoe UI", 10, "bold"), anchor="w")
-    lbl.pack(fill="x", padx=14, pady=(14, 6))
-    underline = tk.Frame(inner, bg=FG_DIM, height=2, width=28)
-    underline.pack(anchor="w", padx=14)
+    lbl = tk.Label(inner, text=title, bg=BG_TILE, fg=FG, font=("Segoe UI", 9, "bold"),
+                    anchor="w", wraplength=110, justify="left")
+    lbl.pack(fill="x", padx=12, pady=(10, 4))
+    underline = tk.Frame(inner, bg=FG_DIM, height=2, width=24)
+    underline.pack(anchor="w", padx=12)
 
     widgets = [tile, tile.canvas, inner, lbl, underline]
 
@@ -333,14 +350,14 @@ def make_tile(parent, title, command):
         inner.configure(bg=BG_TILE_HOVER)
         lbl.configure(bg=BG_TILE_HOVER)
         underline.configure(bg=ACCENT)
-        tile._on_resize(type("E", (), {"width": tile.winfo_width(), "height": tile.winfo_height()})())
+        tile._redraw()
 
     def on_leave(_e=None):
         tile.bg = BG_TILE
         inner.configure(bg=BG_TILE)
         lbl.configure(bg=BG_TILE)
         underline.configure(bg=FG_DIM)
-        tile._on_resize(type("E", (), {"width": tile.winfo_width(), "height": tile.winfo_height()})())
+        tile._redraw()
 
     for w in widgets:
         w.configure(cursor="hand2") if hasattr(w, "configure") else None
@@ -371,9 +388,28 @@ class PDVSimulator:
         self.send_lock = threading.Lock()
 
         self._setup_style()
+        self._set_app_icon()
         self._build_ui()
         self._log("Simulador pronto. Configure a conexão e ative o Habilitar.")
         self._pulse_status()
+
+    def _set_app_icon(self):
+        """Define o ícone da janela (barra de título/taskbar) a partir de
+        icon.ico (Windows) ou icon.png (demais plataformas), se existirem ao
+        lado do script. No .exe compilado, o ícone já vem embutido via
+        --icon no PyInstaller, então essa chamada é só um reforço para quando
+        o script roda direto com 'python pdv_simulator.py'."""
+        base_dir = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+        try:
+            ico_path = os.path.join(base_dir, "icon.ico")
+            png_path = os.path.join(base_dir, "icon.png")
+            if os.name == "nt" and os.path.exists(ico_path):
+                self.root.iconbitmap(ico_path)
+            elif os.path.exists(png_path):
+                self._icon_img = tk.PhotoImage(file=png_path)
+                self.root.iconphoto(True, self._icon_img)
+        except Exception:
+            pass  # ausencia do arquivo de icone nunca deve travar o simulador
 
     # --------------------------------------------------------------- estilo ---
     def _setup_style(self):
@@ -414,18 +450,38 @@ class PDVSimulator:
         self.root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
 
     # ---------------------------------------------------------------- header ---
+    def _build_logo_mark(self, parent, size=40):
+        """Desenha, em vetor (canvas), a mesma marca do ícone do app: um
+        quadrado preto com borda verde e um prompt '>_' — assim o cabeçalho
+        sempre exibe a marca corretamente, mesmo sem o arquivo de ícone."""
+        c = tk.Canvas(parent, width=size, height=size, bg=BG_HEADER, highlightthickness=0)
+        pad = 3
+        c.create_rectangle(pad, pad, size - pad, size - pad, outline=ACCENT, width=2,
+                            fill=BG)
+        cx, cy = size * 0.42, size * 0.5
+        s = size * 0.16
+        c.create_polygon(cx - s, cy - s, cx + s * 0.4, cy, cx - s, cy + s,
+                          cx - s * 0.4, cy + s, cx + s * 0.9, cy, cx - s * 0.4, cy - s,
+                          fill=ACCENT, outline="")
+        c.create_rectangle(cx + s * 0.3, cy + s * 0.55, cx + s * 1.7, cy + s * 0.85,
+                            fill=ACCENT, outline="")
+        return c
+
     def _build_header(self):
         header = tk.Frame(self.root, bg=BG_HEADER, height=76)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
 
         title_box = tk.Frame(header, bg=BG_HEADER)
-        title_box.pack(side="left", padx=24, pady=12)
-        title_row = tk.Frame(title_box, bg=BG_HEADER)
+        title_box.pack(side="left", padx=(20, 0), pady=12)
+        self._build_logo_mark(title_box).pack(side="left", padx=(0, 12))
+        text_box = tk.Frame(title_box, bg=BG_HEADER)
+        text_box.pack(side="left")
+        title_row = tk.Frame(text_box, bg=BG_HEADER)
         title_row.pack(anchor="w")
         tk.Label(title_row, text="simulador", bg=BG_HEADER, fg=FG, font=FONT_TITLE).pack(side="left")
         tk.Label(title_row, text="pdv", bg=BG_HEADER, fg=ACCENT, font=FONT_TITLE).pack(side="left")
-        tk.Label(title_box, text="Overlay de teste compatível com gravadores Intelbras",
+        tk.Label(text_box, text="Overlay de teste compatível com gravadores Intelbras",
                  bg=BG_HEADER, fg=FG_DIM, font=FONT_SUB).pack(anchor="w")
 
         status_pill = RoundedCard(header, bg=BG_PANEL, radius=16, outer_bg=BG_HEADER)
@@ -601,7 +657,7 @@ class PDVSimulator:
         sale_wrap.grid(row=0, column=0, sticky="nsew", pady=(0, 12))
 
         tiles_row = tk.Frame(sale_frame, bg=BG_PANEL)
-        tiles_row.pack(fill="x", pady=(0, 12))
+        tiles_row.pack(fill="x", pady=(0, 14))
         tile_defs = [
             ("+ Cabeçalho", self._insert_header, "Insere nome da loja, CNPJ e data/hora."),
             ("+ Item", self._insert_item, "Insere um produto aleatório com quantidade e valor."),
@@ -610,10 +666,14 @@ class PDVSimulator:
             ("+ Rodapé", self._insert_footer, "Insere a mensagem de agradecimento final."),
             ("Limpar tudo", self._clear_text, "Apaga todo o texto do cupom."),
         ]
+        n_cols = 3
+        for c in range(n_cols):
+            tiles_row.grid_columnconfigure(c, weight=1, uniform="tiles")
         for i, (label, cmd, desc_tile) in enumerate(tile_defs):
-            tiles_row.grid_columnconfigure(i, weight=1, uniform="tiles")
+            r, c = divmod(i, n_cols)
             tile = make_tile(tiles_row, label, cmd)
-            tile.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0))
+            tile.grid(row=r, column=c, sticky="nsew",
+                      padx=(0 if c == 0 else 6, 0), pady=(0 if r == 0 else 6, 0))
             tip(tile, desc_tile)
 
         gerar_btn = make_button(sale_frame, "Gerar Venda Aleatória", self._generate_random_sale,
@@ -698,10 +758,11 @@ class PDVSimulator:
     def _insert_item(self):
         nome, preco = random.choice(PRODUTOS)
         qtd = random.randint(1, 3)
-        self.text.insert("insert", f"{nome:<24}{qtd}x{fmt_brl(preco):>6} {fmt_brl(qtd*preco):>8}\n")
+        rotulo = f"{nome} {qtd}x{fmt_brl(preco)}"
+        self.text.insert("insert", linha_pontilhada(rotulo, fmt_brl(qtd * preco)) + "\n")
 
     def _insert_total(self):
-        self.text.insert("insert", f"TOTAL A PAGAR ........... {fmt_brl(0):>5}\n")
+        self.text.insert("insert", linha_pontilhada("TOTAL A PAGAR", fmt_brl(0)) + "\n")
 
     def _insert_payment(self):
         self.text.insert("insert", random.choice([
@@ -731,9 +792,10 @@ class PDVSimulator:
             qtd = random.randint(1, 3)
             subtotal = qtd * preco
             total += subtotal
-            lines.append(f"{nome:<22}{qtd}x{fmt_brl(preco):>5}{fmt_brl(subtotal):>8}")
+            rotulo = f"{nome} {qtd}x{fmt_brl(preco)}"
+            lines.append(linha_pontilhada(rotulo, fmt_brl(subtotal)))
         lines.append("-" * 32)
-        lines.append(f"TOTAL .......................{fmt_brl(total):>8}")
+        lines.append(linha_pontilhada("TOTAL A PAGAR", fmt_brl(total)))
         lines.append(random.choice([
             "FORMA DE PAGAMENTO: CARTAO DEBITO",
             "FORMA DE PAGAMENTO: CARTAO CREDITO",
