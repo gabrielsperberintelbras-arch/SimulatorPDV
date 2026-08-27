@@ -4,8 +4,8 @@
 Simulador de PDV - Ferramenta de teste para overlay de POS em DVRs/NVRs Intelbras
 ====================================================================================
 Envia dados de "venda" via rede (TCP servidor, TCP cliente ou UDP) para que o
-gravador receba e exiba a sobreposição de PDV, do mesmo jeito qureal faria.
-e um PDV 
+gravador receba e exiba a sobreposição de PDV, do mesmo jeito que um PDV real faria.
+
 Como escolher o modo de conexão (compare com a tela "Modo de conexão" do gravador):
 
   - Gravador configurado como TCP_CLIENT  -> aqui use "TCP Servidor" (o simulador
@@ -579,9 +579,10 @@ class PDVSimulator:
         enc_combo = ttk.Combobox(grid, textvariable=self.enc_var, values=list(ENCODINGS.keys()),
                                   state="readonly")
         enc_combo.grid(row=5, column=0, sticky="we", pady=(2, 0), padx=(0, 6))
-        tip(enc_combo, "Como o texto vira bytes na rede. A maioria dos gravadores Intelbras "
-                        "espera Latin-1 ou ASCII (1 byte por caractere, sem acentos). UTF-8 usa "
-                        "vários bytes para acentos e pode confundir o parser do gravador.")
+        tip(enc_combo, "O guia técnico da Intelbras recomenda Unicode (UTF-8) no campo "
+                        "'Converter' do gravador — é a opção documentada oficialmente. Troque "
+                        "para Latin-1/ASCII apenas se notar caracteres estranhos no overlay "
+                        "com UTF-8.")
 
         ttk.Label(grid, text="Terminador", style="Dim.TLabel").grid(row=4, column=1, sticky="w")
         self.term_var = tk.StringVar(value="CRLF (\\r\\n)")
@@ -656,6 +657,17 @@ class PDVSimulator:
                  "aleatória pronta para testar o overlay.")
         sale_wrap.grid(row=0, column=0, sticky="nsew", pady=(0, 12))
 
+        sinal_row = tk.Frame(sale_frame, bg=BG_PANEL)
+        sinal_row.pack(fill="x", pady=(0, 12))
+        ttk.Label(sinal_row, text="Sinal final de PDV", style="Dim.TLabel").pack(side="left")
+        self.signal_var = tk.StringVar(value="Muito Obrigado!")
+        signal_entry = ttk.Entry(sinal_row, textvariable=self.signal_var)
+        signal_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        tip(signal_entry, "Frase que marca o fim da venda para o Defense IA (Configurações > "
+                            "Parâmetros > Sinal final de PDV no gravador precisa ter exatamente "
+                            "essa mesma frase). Sem ela bater, o software não sabe quando a "
+                            "análise dos itens deve começar.")
+
         tiles_row = tk.Frame(sale_frame, bg=BG_PANEL)
         tiles_row.pack(fill="x", pady=(0, 14))
         tile_defs = [
@@ -664,6 +676,9 @@ class PDVSimulator:
             ("+ Total", self._insert_total, "Insere a linha de total a pagar."),
             ("+ Pagamento", self._insert_payment, "Insere a forma de pagamento (cartão, dinheiro, PIX)."),
             ("+ Rodapé", self._insert_footer, "Insere a mensagem de agradecimento final."),
+            ("+ Sinal final", self._insert_signal, "Insere o nome da loja + o Sinal final de "
+                                                     "PDV configurado acima (usado pelo Defense "
+                                                     "IA para saber que a venda terminou)."),
             ("Limpar tudo", self._clear_text, "Apaga todo o texto do cupom."),
         ]
         n_cols = 3
@@ -676,11 +691,22 @@ class PDVSimulator:
                       padx=(0 if c == 0 else 6, 0), pady=(0 if r == 0 else 6, 0))
             tip(tile, desc_tile)
 
-        gerar_btn = make_button(sale_frame, "Gerar Venda Aleatória", self._generate_random_sale,
+        gerar_row = tk.Frame(sale_frame, bg=BG_PANEL)
+        gerar_row.pack(fill="x", pady=(0, 4))
+        gerar_ref_btn = make_button(gerar_row, "Gerar (modelo Intelbras/NetAssist)",
+                                     self._generate_netassist_sale)
+        gerar_ref_btn.pack(side="right", padx=(8, 0))
+        tip(gerar_ref_btn, "Monta a venda no formato exato do guia técnico POS/PDV da "
+                             "Intelbras (linhas separadas por traços, 'TOTAL :', 'DESCONTO', "
+                             "'TROCO', 'Administrador Caixa' e o Sinal final de PDV) — útil se "
+                             "seu Defense IA está configurado no perfil 'General' com esses "
+                             "rótulos.")
+        gerar_btn = make_button(gerar_row, "Gerar Venda Aleatória", self._generate_random_sale,
                                  primary=True)
-        gerar_btn.pack(anchor="e", pady=(0, 4))
+        gerar_btn.pack(side="right")
         tip(gerar_btn, "Substitui o cupom atual por uma venda completa e aleatória "
-                        "(cabeçalho, 2 a 6 itens, total e pagamento).")
+                        "(cabeçalho, 2 a 6 itens, total e pagamento, com líder de pontos — "
+                        "mais legível em overlays de fonte proporcional).")
 
         self.text = scrolledtext.ScrolledText(sale_frame, height=10, bg=BG_FIELD, fg=FG,
                                                insertbackground=FG, font=FONT_MONO, wrap="word",
@@ -775,8 +801,60 @@ class PDVSimulator:
     def _insert_footer(self):
         self.text.insert("insert", "OBRIGADO PELA PREFERENCIA\nVOLTE SEMPRE\n")
 
+    def _insert_signal(self):
+        """Insere o par 'nome da loja + Sinal final de PDV' — no guia da Intelbras
+        é exatamente essa frase final que o Defense IA usa para saber que os
+        itens da venda terminaram e a análise pode começar."""
+        sinal = self.signal_var.get().strip() or "Muito Obrigado!"
+        self.text.insert("insert", f"Mercado XXXXXX\n{sinal}\n")
+
     def _clear_text(self):
         self.text.delete("1.0", "end")
+
+    def _build_netassist_sale_text(self):
+        """Monta uma venda no formato exato do guia técnico POS/PDV da Intelbras
+        (exemplo testado com o NetAssist): linhas separadas por traços, rótulos
+        'TOTAL :', 'DESCONTO', 'Informacoes Adicionais', 'TOTAL (IMP) :', 'TROCO :',
+        'Administrador Caixa <nome>' e o Sinal final de PDV configurado acima."""
+        sep = "-" * 42
+        sinal = self.signal_var.get().strip() or "Muito Obrigado!"
+        agora = datetime.datetime.now()
+        linhas = [sep, f"Caixa {random.randint(1, 20):04d} 01 {agora.strftime('%d/%m/%Y %H:%M:%S')}", sep]
+
+        total = 0.0
+        for _ in range(random.randint(2, 5)):
+            nome, preco = random.choice(PRODUTOS)
+            qtd = random.randint(1, 5)
+            subtotal = preco * qtd
+            total += subtotal
+            linhas.append(f"{nome.title()} {fmt_brl(preco)} X {qtd} {fmt_brl(subtotal)}")
+            linhas.append(sep)
+
+        desconto = random.choice([0, 0, 0, 5.0, 10.0])
+        recebido = round(total - desconto + random.choice([0, 0, 2, 5, 10]), 2)
+        total_imp = round(total - desconto, 2)
+        troco = round(max(0.0, recebido - total_imp), 2)
+
+        linhas.append(f"TOTAL : {fmt_brl(total)}")
+        linhas.append(f"RECEBIDO {fmt_brl(recebido)}")
+        linhas.append(sep)
+        if desconto:
+            linhas.append(f"DESCONTO {fmt_brl(desconto)}")
+            linhas.append(sep)
+        linhas.append("Informacoes Adicionais")
+        linhas.append("-----------")
+        linhas.append(f"TOTAL (IMP) : {fmt_brl(total_imp)}")
+        linhas.append(f"TROCO : {fmt_brl(troco)}")
+        linhas.append(sep)
+        linhas.append("Administrador Caixa Gabriel")
+        linhas.append(sep)
+        linhas.append("Mercado XXXXXX")
+        linhas.append(sinal)
+        return "\n".join(linhas) + "\n"
+
+    def _generate_netassist_sale(self):
+        self._clear_text()
+        self.text.insert("1.0", self._build_netassist_sale_text())
 
     def _generate_random_sale(self):
         self._clear_text()
