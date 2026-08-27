@@ -4,8 +4,8 @@
 Simulador de PDV - Ferramenta de teste para overlay de POS em DVRs/NVRs Intelbras
 ====================================================================================
 Envia dados de "venda" via rede (TCP servidor, TCP cliente ou UDP) para que o
-gravador receba e exiba a sobreposição de PDV, do mesmo jeito que um PDV real faria.
-
+gravador receba e exiba a sobreposição de PDV, do mesmo jeito qureal faria.
+e um PDV 
 Como escolher o modo de conexão (compare com a tela "Modo de conexão" do gravador):
 
   - Gravador configurado como TCP_CLIENT  -> aqui use "TCP Servidor" (o simulador
