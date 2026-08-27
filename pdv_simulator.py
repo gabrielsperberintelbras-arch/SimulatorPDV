@@ -387,6 +387,19 @@ class PDVSimulator:
         self.auto_running = False
         self.send_lock = threading.Lock()
 
+        # Preferencias configuraveis na pagina "Configuracoes"
+        self.store_name_var = tk.StringVar(value="LOJA TESTE INTELBRAS")
+        self.store_cnpj_var = tk.StringVar(value="00.000.000/0001-00")
+        self.min_delay_warn_var = tk.StringVar(value="600")
+
+        # Estatisticas do log
+        self.stat_packets = 0
+        self.stat_lines = 0
+        self.stat_packets_var = tk.StringVar(value="0")
+        self.stat_lines_var = tk.StringVar(value="0")
+        self.stat_last_var = tk.StringVar(value="—")
+        self._active_page = None
+
         self._setup_style()
         self._set_app_icon()
         self._build_ui()
@@ -449,6 +462,18 @@ class PDVSimulator:
         self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
         self.root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
 
+        # Treeview (tabela do log) e Scrollbar com tema escuro
+        style.configure("Treeview", background=BG_LOG, fieldbackground=BG_LOG,
+                         foreground=FG, borderwidth=0, rowheight=27, font=FONT)
+        style.map("Treeview", background=[("selected", ACCENT_SOFT)],
+                   foreground=[("selected", FG)])
+        style.configure("Treeview.Heading", background=BG_PANEL, foreground=FG_DIM,
+                         font=FONT_BOLD, borderwidth=0, relief="flat")
+        style.map("Treeview.Heading", background=[("active", BG_PANEL)])
+        style.configure("Vertical.TScrollbar", background=BG_PANEL, troughcolor=BG,
+                         bordercolor=BG, arrowcolor=FG_DIM, relief="flat", arrowsize=12)
+        style.map("Vertical.TScrollbar", background=[("active", BTN_DARK_HOVER)])
+
     # ---------------------------------------------------------------- header ---
     def _build_logo_mark(self, parent, size=40):
         """Desenha, em vetor (canvas), a mesma marca do ícone do app: um
@@ -485,7 +510,7 @@ class PDVSimulator:
                  bg=BG_HEADER, fg=FG_DIM, font=FONT_SUB).pack(anchor="w")
 
         status_pill = RoundedCard(header, bg=BG_PANEL, radius=16, outer_bg=BG_HEADER)
-        status_pill.configure(width=190, height=34)
+        status_pill.configure(width=290, height=34)
         status_pill.pack_propagate(False)
         status_pill.pack(side="right", padx=24)
         status_box = status_pill.inner
@@ -506,24 +531,130 @@ class PDVSimulator:
     def _build_ui(self):
         self._build_header()
 
-        outer = tk.Frame(self.root, bg=BG, padx=16, pady=14)
+        body = tk.Frame(self.root, bg=BG)
+        body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
+
+        self._build_sidebar(body)
+
+        pages_container = tk.Frame(body, bg=BG)
+        pages_container.grid(row=0, column=1, sticky="nsew")
+        pages_container.grid_columnconfigure(0, weight=1)
+        pages_container.grid_rowconfigure(0, weight=1)
+
+        self.pages = {}
+        self.pages["Enviar Cupom"] = self._build_page_enviar(pages_container)
+        self.pages["Log de Eventos"] = self._build_page_log(pages_container)
+        self.pages["Configurações"] = self._build_page_config(pages_container)
+        self.pages["Sobre"] = self._build_page_sobre(pages_container)
+        for pg in self.pages.values():
+            pg.grid(row=0, column=0, sticky="nsew")
+
+        self._on_mode_change()
+        self._show_page("Enviar Cupom")
+
+    # ------------------------------------------------------- navegação ---
+    def _build_sidebar(self, parent):
+        sidebar = tk.Frame(parent, bg=BG_HEADER, width=224)
+        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid_propagate(False)
+        tk.Frame(parent, bg=BORDER, width=1).grid(row=0, column=0, sticky="nse")
+
+        nav_wrap = tk.Frame(sidebar, bg=BG_HEADER)
+        nav_wrap.pack(fill="x", pady=(20, 0), padx=12)
+        nav_items = [
+            ("Enviar Cupom", "⇪"),
+            ("Log de Eventos", "🗒"),
+            ("Configurações", "⚙"),
+            ("Sobre", "ℹ"),
+        ]
+        self.nav_buttons = {}
+        for name, icon in nav_items:
+            self.nav_buttons[name] = self._make_nav_button(nav_wrap, name, icon)
+
+        foot = tk.Frame(sidebar, bg=BG_HEADER)
+        foot.pack(side="bottom", fill="x", padx=16, pady=18)
+        tk.Frame(foot, bg=BORDER, height=1).pack(fill="x", pady=(0, 12))
+        tk.Label(foot, text="intelbras", bg=BG_HEADER, fg=FG,
+                 font=("Segoe UI", 13, "bold", "italic")).pack(anchor="w")
+        tk.Label(foot, text="Tecnologia que conecta.", bg=BG_HEADER, fg=FG_DIM,
+                 font=FONT_SUB).pack(anchor="w", pady=(2, 8))
+        tk.Label(foot, text="Simulador PDV v1.0.0", bg=BG_HEADER, fg="#5a5a5a",
+                 font=("Segoe UI", 8)).pack(anchor="w")
+
+    def _make_nav_button(self, parent, name, icon):
+        row = tk.Frame(parent, bg=BG_HEADER, cursor="hand2")
+        row.pack(fill="x", pady=3)
+        accent = tk.Frame(row, bg=BG_HEADER, width=3)
+        accent.pack(side="left", fill="y")
+        content = tk.Frame(row, bg=BG_HEADER)
+        content.pack(side="left", fill="both", expand=True, padx=(11, 6), pady=9)
+        icon_lbl = tk.Label(content, text=icon, bg=BG_HEADER, fg=FG_DIM, font=("Segoe UI", 11))
+        icon_lbl.pack(side="left", padx=(0, 10))
+        text_lbl = tk.Label(content, text=name, bg=BG_HEADER, fg=FG_DIM, font=FONT)
+        text_lbl.pack(side="left")
+
+        row._accent = accent
+        row._recolor_widgets = [content, icon_lbl, text_lbl]
+
+        def on_click(_e=None):
+            self._show_page(name)
+
+        def on_enter(_e=None):
+            if self._active_page != name:
+                for w in [row] + row._recolor_widgets:
+                    w.configure(bg=BG_TILE_HOVER)
+                accent.configure(bg=BG_TILE_HOVER)
+
+        def on_leave(_e=None):
+            if self._active_page != name:
+                for w in [row] + row._recolor_widgets:
+                    w.configure(bg=BG_HEADER)
+                accent.configure(bg=BG_HEADER)
+
+        for w in [row, content, icon_lbl, text_lbl]:
+            w.bind("<Button-1>", on_click)
+            w.bind("<Enter>", on_enter)
+            w.bind("<Leave>", on_leave)
+        return row
+
+    def _show_page(self, name):
+        self._active_page = name
+        for pname, frame in self.pages.items():
+            if pname == name:
+                frame.tkraise()
+        for pname, btn in self.nav_buttons.items():
+            active = pname == name
+            bg = ACCENT_SOFT if active else BG_HEADER
+            fgcolor = ACCENT if active else FG_DIM
+            btn.configure(bg=bg)
+            btn._accent.configure(bg=ACCENT if active else BG_HEADER)
+            for w in btn._recolor_widgets:
+                w.configure(bg=bg)
+                try:
+                    w.configure(fg=fgcolor)
+                except tk.TclError:
+                    pass
+
+    # ------------------------------------------------------- página: Enviar Cupom ---
+    def _build_page_enviar(self, parent):
+        page = tk.Frame(parent, bg=BG)
+        outer = tk.Frame(page, bg=BG, padx=18, pady=16)
         outer.pack(fill="both", expand=True)
         outer.grid_columnconfigure(0, weight=0)
         outer.grid_columnconfigure(1, weight=1)
         outer.grid_rowconfigure(0, weight=1)
 
-        # Coluna esquerda: configuração (largura fixa, altura total)
         left_col = tk.Frame(outer, bg=BG, width=400)
         left_col.grid(row=0, column=0, sticky="ns", padx=(0, 14))
         left_col.grid_propagate(False)
         left_col.pack_propagate(False)
 
-        # Coluna direita: area de trabalho (expande com a janela)
         right_col = tk.Frame(outer, bg=BG)
         right_col.grid(row=0, column=1, sticky="nsew")
         right_col.grid_columnconfigure(0, weight=1)
-        right_col.grid_rowconfigure(0, weight=3)
-        right_col.grid_rowconfigure(1, weight=2)
+        right_col.grid_rowconfigure(0, weight=1)
 
         # ---- Conexao ----
         conn_wrap, conn_frame = section(
@@ -531,6 +662,7 @@ class PDVSimulator:
             desc="Escolha como o simulador conversa com o gravador Intelbras: quem inicia a "
                  "conexão, em qual IP/porta, e como o texto é codificado.")
         conn_wrap.pack(fill="x", pady=(0, 12))
+
 
         top_row = tk.Frame(conn_frame, bg=BG_PANEL)
         top_row.pack(fill="x", pady=(0, 12))
@@ -617,10 +749,14 @@ class PDVSimulator:
         delay_spin = ttk.Spinbox(delay_row, from_=0, to=5000, increment=50, textvariable=self.delay_var,
                                   width=6)
         delay_spin.pack(side="right")
-        tip(delay_spin, "Tempo de espera entre cada linha enviada. Valores abaixo de "
-                         "~600-700ms costumam causar perda de dados em alguns gravadores.")
-        tk.Label(send_frame, text="⚠ abaixo de ~600-700ms o gravador costuma perder dados",
+        tip(delay_spin, "Tempo de espera entre cada linha enviada. Valores abaixo do limiar "
+                         "configurado em Configurações costumam causar perda de dados em "
+                         "alguns gravadores.")
+        self.delay_warn_var = tk.StringVar()
+        tk.Label(send_frame, textvariable=self.delay_warn_var,
                  bg=BG_PANEL, fg="#f5c542", font=FONT_SUB, anchor="w").pack(fill="x", pady=(4, 0))
+        self._update_delay_warning()
+        self.min_delay_warn_var.trace_add("write", lambda *a: self._update_delay_warning())
 
         tk.Frame(send_frame, bg=BORDER, height=1).pack(fill="x", pady=(14, 12))
 
@@ -713,24 +849,196 @@ class PDVSimulator:
                                                borderwidth=1, relief="solid", highlightbackground=BORDER,
                                                highlightcolor=ACCENT, highlightthickness=1)
         self.text.pack(fill="both", expand=True)
+
+        counter_row = tk.Frame(sale_frame, bg=BG_PANEL)
+        counter_row.pack(fill="x", pady=(8, 0))
+        self.counter_var = tk.StringVar(value="Caracteres: 0  |  Linhas: 0")
+        tk.Label(counter_row, textvariable=self.counter_var, bg=BG_PANEL, fg=FG_DIM,
+                 font=FONT_SUB).pack(side="right")
+        self.text.bind("<KeyRelease>", lambda e: self._update_counter())
+
         self._generate_random_sale()
 
-        # ---- Log (coluna direita, embaixo) ----
+        return page
+
+    # ------------------------------------------------------- página: Log de Eventos ---
+    def _build_page_log(self, parent):
+        page = tk.Frame(parent, bg=BG)
+        outer = tk.Frame(page, bg=BG, padx=18, pady=16)
+        outer.pack(fill="both", expand=True)
+
         log_wrap, log_frame = section(
-            right_col, "Log de eventos", icon="📋",
+            outer, "Log de eventos", icon="📋",
             desc="Cada conexão, envio e erro aparece aqui — erros vêm com uma sugestão de "
                  "solução, não só o código técnico.")
-        log_wrap.grid(row=1, column=0, sticky="nsew")
-        self.log = scrolledtext.ScrolledText(log_frame, height=6, bg=BG_LOG, fg="#63d98a",
-                                              font=FONT_MONO, state="disabled", wrap="word",
-                                              borderwidth=1, relief="solid", highlightbackground=BORDER,
-                                              highlightthickness=1)
-        self.log.pack(fill="both", expand=True)
-        self.log.tag_configure("ok", foreground="#63d98a")
-        self.log.tag_configure("warn", foreground="#f5c542")
-        self.log.tag_configure("err", foreground="#ef5350")
+        log_wrap.pack(fill="both", expand=True)
 
-        self._on_mode_change()
+        table_wrap = tk.Frame(log_frame, bg=BG_PANEL)
+        table_wrap.pack(fill="both", expand=True)
+
+        columns = ("hora", "tipo", "msg")
+        self.log_tree = ttk.Treeview(table_wrap, columns=columns, show="headings")
+        self.log_tree.heading("hora", text="Hora")
+        self.log_tree.heading("tipo", text="Tipo")
+        self.log_tree.heading("msg", text="Mensagem")
+        self.log_tree.column("hora", width=90, anchor="w", stretch=False)
+        self.log_tree.column("tipo", width=110, anchor="w", stretch=False)
+        self.log_tree.column("msg", anchor="w", stretch=True)
+        vsb = ttk.Scrollbar(table_wrap, orient="vertical", command=self.log_tree.yview)
+        self.log_tree.configure(yscrollcommand=vsb.set)
+        self.log_tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        self.log_tree.tag_configure("enviado", foreground="#63d98a")
+        self.log_tree.tag_configure("conectado", foreground="#63d98a")
+        self.log_tree.tag_configure("erro", foreground=DANGER)
+        self.log_tree.tag_configure("info", foreground="#6aa9e0")
+
+        actions_row = tk.Frame(log_frame, bg=BG_PANEL)
+        actions_row.pack(fill="x", pady=(10, 0))
+        clear_btn = make_button(actions_row, "Limpar log", self._clear_log)
+        clear_btn.pack(side="right")
+        export_btn = make_button(actions_row, "Exportar", self._export_log)
+        export_btn.pack(side="right", padx=(0, 8))
+
+        footer = tk.Frame(log_frame, bg=BG_PANEL)
+        footer.pack(fill="x", pady=(10, 0))
+        tk.Frame(footer, bg=BORDER, height=1).pack(fill="x", pady=(0, 10))
+        stats_row = tk.Frame(footer, bg=BG_PANEL)
+        stats_row.pack(fill="x")
+        self._stat_block(stats_row, "📎", "Pacotes enviados:", self.stat_packets_var)
+        self._stat_block(stats_row, "📃", "Linhas enviadas:", self.stat_lines_var)
+        self._stat_block(stats_row, "🕒", "Último envio:", self.stat_last_var)
+
+        return page
+
+    def _stat_block(self, parent, icon, label, var):
+        block = tk.Frame(parent, bg=BG_PANEL)
+        block.pack(side="left", padx=(0, 26))
+        tk.Label(block, text=icon, bg=BG_PANEL, fg=FG_DIM, font=("Segoe UI", 10)).pack(side="left", padx=(0, 6))
+        tk.Label(block, text=label, bg=BG_PANEL, fg=FG_DIM, font=FONT_SUB).pack(side="left", padx=(0, 4))
+        tk.Label(block, textvariable=var, bg=BG_PANEL, fg=FG, font=FONT_BOLD).pack(side="left")
+
+    def _clear_log(self):
+        for item in self.log_tree.get_children():
+            self.log_tree.delete(item)
+        self.stat_packets = 0
+        self.stat_lines = 0
+        self.stat_packets_var.set("0")
+        self.stat_lines_var.set("0")
+        self.stat_last_var.set("—")
+
+    def _export_log(self):
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            defaultextension=".txt", filetypes=[("Arquivo de texto", "*.txt")],
+            initialfile="log_simulador_pdv.txt", title="Exportar log")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for item in self.log_tree.get_children():
+                    hora, tipo, msg = self.log_tree.item(item, "values")
+                    f.write(f"[{hora}] {tipo}: {msg}\n")
+            messagebox.showinfo("Exportar log", f"Log exportado para:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Erro ao exportar", str(e))
+
+    # ------------------------------------------------------- página: Configurações ---
+    def _build_page_config(self, parent):
+        page = tk.Frame(parent, bg=BG)
+        outer = tk.Frame(page, bg=BG, padx=18, pady=16)
+        outer.pack(fill="both", expand=True)
+
+        wrap, frame = section(
+            outer, "Preferências", icon="⚙",
+            desc="Valores padrão usados ao gerar cupons de teste e ao avisar sobre atrasos "
+                 "de envio arriscados.")
+        wrap.pack(fill="x", pady=(0, 12))
+
+        grid = tk.Frame(frame, bg=BG_PANEL)
+        grid.pack(fill="x")
+        grid.grid_columnconfigure(0, weight=1)
+        grid.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(grid, text="Nome da loja (padrão)", style="Dim.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(grid, textvariable=self.store_name_var).grid(
+            row=1, column=0, sticky="we", pady=(2, 14), padx=(0, 6))
+
+        ttk.Label(grid, text="CNPJ (padrão)", style="Dim.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Entry(grid, textvariable=self.store_cnpj_var).grid(
+            row=1, column=1, sticky="we", pady=(2, 14))
+
+        ttk.Label(grid, text="Aviso de atraso mínimo (ms)", style="Dim.TLabel").grid(row=2, column=0, sticky="w")
+        ttk.Spinbox(grid, from_=0, to=5000, increment=50, textvariable=self.min_delay_warn_var,
+                    width=10).grid(row=3, column=0, sticky="w", pady=(2, 4))
+
+        restore_btn = make_button(frame, "Restaurar padrões", self._restore_defaults)
+        restore_btn.pack(anchor="w", pady=(14, 0))
+
+        info_wrap, info_frame = section(
+            outer, "Privacidade", icon="🔒",
+            desc="Este simulador conversa apenas com o gravador na sua rede local — nenhum "
+                 "dado é enviado para a Intelbras ou para qualquer serviço externo.")
+        info_wrap.pack(fill="x")
+
+        return page
+
+    def _restore_defaults(self):
+        self.store_name_var.set("LOJA TESTE INTELBRAS")
+        self.store_cnpj_var.set("00.000.000/0001-00")
+        self.min_delay_warn_var.set("600")
+
+    # ------------------------------------------------------- página: Sobre ---
+    def _build_page_sobre(self, parent):
+        page = tk.Frame(parent, bg=BG)
+        outer = tk.Frame(page, bg=BG, padx=18, pady=16)
+        outer.pack(fill="both", expand=True)
+
+        wrap, frame = section(
+            outer, "Sobre o Simulador PDV", icon="ℹ",
+            desc="Ferramenta interna de teste para o overlay de POS/PDV dos gravadores "
+                 "Intelbras.")
+        wrap.pack(fill="x", pady=(0, 12))
+
+        texto = (
+            "O Simulador PDV envia um cupom de venda de teste pela rede, do mesmo jeito que "
+            "um PDV real faria, para validar se o gravador reconhece e sobrepõe corretamente "
+            "as informações de venda no vídeo.\n\n"
+            "Como escolher o modo de conexão (compare com a tela \"Modo de conexão\" do "
+            "gravador):\n"
+            "•  Gravador em TCP_CLIENT  →  use TCP Servidor aqui (o simulador espera o "
+            "gravador conectar).\n"
+            "•  Gravador em TCP  →  use TCP Cliente aqui (o simulador conecta no gravador).\n"
+            "•  Gravador em UDP  →  use UDP aqui.\n\n"
+            "Nenhum dado sai da rede local: a comunicação acontece direto entre este "
+            "computador e o gravador."
+        )
+        tk.Label(frame, text=texto, bg=BG_PANEL, fg=FG, font=FONT, justify="left",
+                 anchor="w", wraplength=760).pack(fill="x")
+
+        tk.Frame(frame, bg=BORDER, height=1).pack(fill="x", pady=(16, 12))
+        tk.Label(frame, text="Simulador PDV — versão 1.0.0", bg=BG_PANEL, fg=FG_DIM,
+                 font=FONT_SUB).pack(anchor="w")
+        tk.Label(frame, text="Desenvolvido internamente para testes de integração com "
+                              "gravadores Intelbras.", bg=BG_PANEL, fg=FG_DIM,
+                 font=FONT_SUB).pack(anchor="w", pady=(2, 0))
+
+        return page
+
+    def _update_counter(self):
+        content = self.text.get("1.0", "end-1c")
+        n_chars = len(content)
+        n_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+        self.counter_var.set(f"Caracteres: {n_chars}  |  Linhas: {n_lines}")
+
+    def _update_delay_warning(self):
+        try:
+            limiar = int(self.min_delay_warn_var.get())
+        except ValueError:
+            limiar = 600
+        self.delay_warn_var.set(f"⚠ abaixo de ~{limiar}ms o gravador costuma perder dados")
+
 
     # ---------------------------------------------------------- helpers ---
     def _current_mode(self):
@@ -746,14 +1054,30 @@ class PDVSimulator:
     def _log(self, msg):
         def do():
             ts = datetime.datetime.now().strftime("%H:%M:%S")
+            low = msg.lower()
             if msg.startswith("⚠"):
-                tag = "err"
+                kind, tag = "Erro", "erro"
+                msg_clean = msg.lstrip("⚠ ").strip()
+            elif msg.startswith("Enviado") or msg.startswith("Linha enviada"):
+                kind, tag = "Enviado", "enviado"
+                msg_clean = msg
+                self.stat_packets += 1 if "pacote" in low else 0
+                self.stat_lines += 1 if "linha enviada" in low else 0
+                self.stat_packets_var.set(str(self.stat_packets))
+                self.stat_lines_var.set(str(self.stat_lines))
+                self.stat_last_var.set(ts)
+            elif "conectou" in low or msg.startswith("Conectado") or "escutando" in low:
+                kind, tag = "Conectado", "conectado"
+                msg_clean = msg
             else:
-                tag = "ok"
-            self.log.configure(state="normal")
-            self.log.insert("end", f"[{ts}] {msg}\n", tag)
-            self.log.see("end")
-            self.log.configure(state="disabled")
+                kind, tag = "Info", "info"
+                msg_clean = msg
+            if hasattr(self, "log_tree"):
+                self.log_tree.insert("", "end", values=(ts, kind, msg_clean), tags=(tag,))
+                children = self.log_tree.get_children()
+                if len(children) > 500:
+                    self.log_tree.delete(children[0])
+                self.log_tree.see(self.log_tree.get_children()[-1])
         self.root.after(0, do)
 
     def _set_status(self, text, ok):
@@ -778,17 +1102,21 @@ class PDVSimulator:
 
     # ------------------------------------------------------- templates ---
     def _insert_header(self):
-        self.text.insert("insert", "LOJA TESTE INTELBRAS\nCNPJ 00.000.000/0001-00\n"
+        self.text.insert("insert", f"{self.store_name_var.get() or 'LOJA TESTE INTELBRAS'}\n"
+                          f"CNPJ {self.store_cnpj_var.get() or '00.000.000/0001-00'}\n"
                           f"{datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+        self._update_counter()
 
     def _insert_item(self):
         nome, preco = random.choice(PRODUTOS)
         qtd = random.randint(1, 3)
         rotulo = f"{nome} {qtd}x{fmt_brl(preco)}"
         self.text.insert("insert", linha_pontilhada(rotulo, fmt_brl(qtd * preco)) + "\n")
+        self._update_counter()
 
     def _insert_total(self):
         self.text.insert("insert", linha_pontilhada("TOTAL A PAGAR", fmt_brl(0)) + "\n")
+        self._update_counter()
 
     def _insert_payment(self):
         self.text.insert("insert", random.choice([
@@ -797,9 +1125,11 @@ class PDVSimulator:
             "FORMA DE PAGAMENTO: DINHEIRO\n",
             "FORMA DE PAGAMENTO: PIX\n",
         ]))
+        self._update_counter()
 
     def _insert_footer(self):
         self.text.insert("insert", "OBRIGADO PELA PREFERENCIA\nVOLTE SEMPRE\n")
+        self._update_counter()
 
     def _insert_signal(self):
         """Insere o par 'nome da loja + Sinal final de PDV' — no guia da Intelbras
@@ -807,9 +1137,11 @@ class PDVSimulator:
         itens da venda terminaram e a análise pode começar."""
         sinal = self.signal_var.get().strip() or "Muito Obrigado!"
         self.text.insert("insert", f"Mercado XXXXXX\n{sinal}\n")
+        self._update_counter()
 
     def _clear_text(self):
         self.text.delete("1.0", "end")
+        self._update_counter()
 
     def _build_netassist_sale_text(self):
         """Monta uma venda no formato exato do guia técnico POS/PDV da Intelbras
@@ -855,12 +1187,13 @@ class PDVSimulator:
     def _generate_netassist_sale(self):
         self._clear_text()
         self.text.insert("1.0", self._build_netassist_sale_text())
+        self._update_counter()
 
     def _generate_random_sale(self):
         self._clear_text()
         lines = []
-        lines.append("LOJA TESTE INTELBRAS")
-        lines.append("CNPJ 00.000.000/0001-00")
+        lines.append(self.store_name_var.get() or "LOJA TESTE INTELBRAS")
+        lines.append(f"CNPJ {self.store_cnpj_var.get() or '00.000.000/0001-00'}")
         lines.append(datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
         lines.append("-" * 32)
         n_itens = random.randint(2, 6)
@@ -882,6 +1215,7 @@ class PDVSimulator:
         ]))
         lines.append("OBRIGADO PELA PREFERENCIA")
         self.text.insert("1.0", "\n".join(lines) + "\n")
+        self._update_counter()
 
     # ------------------------------------------------------ networking ---
     def _on_toggle_enable(self, value):
